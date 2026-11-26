@@ -82,6 +82,24 @@
   .leyenda{display:flex;gap:16px;flex-wrap:wrap;margin-top:6px;color:var(--mut);font-size:12px}
   .leyenda i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 
+  /* Navegación de la línea de tiempo */
+  .nav{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px}
+  .nav button,.nav input{min-height:38px;font-size:13px;padding:6px 12px}
+  .nav input{width:auto;border-radius:10px}
+  .nav .rango{color:var(--ice);font-weight:600;font-size:14px;margin-right:auto}
+  .fuera{display:none;color:var(--mut);font-size:13px;margin:0 0 8px}
+  .fuera.on{display:block}
+  .bar.devuelto{background:#33466f;color:#cfe0ff}
+
+  /* Detalle del caso */
+  .det{padding:18px 22px 22px;display:grid;gap:16px}
+  .det dl{margin:0;display:grid;grid-template-columns:130px 1fr;gap:10px 14px}
+  .det dt{color:var(--mut);font-size:13px}
+  .det dd{margin:0;word-break:break-word}
+  .det .desc{background:#050b1d;border:1px solid var(--line);border-radius:10px;padding:12px 14px;white-space:pre-wrap}
+  .det .acc{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  @media (max-width:520px){.det dl{grid-template-columns:1fr;gap:2px}.det dt{margin-top:8px}}
+
   /* Lista */
   .lista{display:grid;gap:12px;padding:0;margin:0;list-style:none}
   .it{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;display:grid;grid-template-columns:1fr auto;gap:8px 18px;align-items:center;transition:border-color .3s,box-shadow .3s}
@@ -142,7 +160,15 @@
 
   <section class="sec">
     <h3>Próximas 72 horas</h3>
-    <p>Cada barra es una reserva. Tocá una para ir a sus detalles.</p>
+    <p>Cada barra es una reserva. Tocá una para ver el detalle del caso.</p>
+    <div class="nav">
+      <span class="rango" id="rango"></span>
+      <button type="button" id="ant" aria-label="Ver un día antes">‹ Día anterior</button>
+      <button type="button" id="hoy">Hoy</button>
+      <button type="button" id="sig" aria-label="Ver un día después">Día siguiente ›</button>
+      <input type="date" id="ir" aria-label="Ir a una fecha">
+    </div>
+    <p class="fuera" id="fuera">La marca de "Ahora" está fuera de esta vista. Tocá "Hoy" para volver.</p>
     <div class="scope"><div class="scope-in" id="scope"></div>
       <div class="leyenda"><span><i style="background:var(--blue2)"></i>Reservado</span><span><i style="background:var(--am)"></i>Retirado</span><span><i style="background:var(--rd)"></i>Devolución vencida</span></div>
     </div>
@@ -166,7 +192,10 @@
     </label>
     <label>Desde <input type="datetime-local" name="desde" required></label>
     <label>Hasta <input type="datetime-local" name="hasta" required></label>
-    <label class="full">Cliente o caso <input name="cliente_caso" placeholder="Cliente X / 00012345 o #canal-del-caso" maxlength="300"></label>
+    <label>Número de caso <input name="cliente_caso" placeholder="00012345 o #canal-del-caso" maxlength="300"></label>
+    <label>Cliente <input name="cliente" placeholder="Nombre del cliente" maxlength="300"></label>
+    <label class="full">Servicio asociado <input name="servicio" placeholder="Enlace, circuito o ID del servicio" maxlength="300"></label>
+    <label class="full">Descripción del caso <textarea name="descripcion_caso" rows="3" maxlength="1500" placeholder="Qué falla o qué se va a medir, y por qué se necesita el equipo"></textarea></label>
     <label>Ubicación o sede <input name="ubicacion" maxlength="300"></label>
     <label>Responsable <input name="responsable" required maxlength="80" placeholder="Tu nombre" autocomplete="name"></label>
     <label class="full">Observación <textarea name="observacion" rows="2" maxlength="1000" placeholder="Accesorios, fallas, estado del equipo"></textarea></label>
@@ -177,13 +206,17 @@
     </div>
   </form>
 </dialog>
+<dialog id="det" aria-labelledby="det-t">
+  <div class="dh"><h3 id="det-t">Detalle de la reserva</h3><button class="x" type="button" id="det-x" aria-label="Cerrar">×</button></div>
+  <div class="det" id="det-c"></div>
+</dialog>
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script>
 const TZ = "America/Argentina/Buenos_Aires";
 const EQUIPOS = ["VeEX 10G", "VeEX 1G"];
 const H = 3600000, VENT_ANTES = 6 * H, VENT_TOTAL = 72 * H;
-let ahora = new Date(), reservas = [];
+let ahora = new Date(), reservas = [], iniFijo = null;
 
 const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
 const fmt = (v) => new Date(v).toLocaleString("es-AR", { timeZone: TZ, weekday:"short", day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit", hour12:false }).replace(/,/g, "");
@@ -273,24 +306,24 @@ function tarjeta(eq) {
 function pintarScope() {
   const cont = document.getElementById("scope");
   cont.replaceChildren();
-  const ini = ahora.getTime() - VENT_ANTES, fin = ini + VENT_TOTAL;
+  const ini = iniFijo ?? (ahora.getTime() - VENT_ANTES), fin = ini + VENT_TOTAL;
+  const dentro = ahora.getTime() >= ini && ahora.getTime() <= fin;
+  document.getElementById("rango").textContent = `${diaTZ(new Date(ini))} al ${diaTZ(new Date(fin - 1))}`;
+  document.getElementById("fuera").classList.toggle("on", !dentro);
   const pct = (t) => ((t - ini) / VENT_TOTAL) * 100;
 
   EQUIPOS.forEach(eq => {
     const fila = el("div", "fila");
     fila.append(el("span", "lb", eq));
     const pista = el("div", "pista");
-    reservas.filter(r => r.equipo === eq && activa(r)).forEach(r => {
+    reservas.filter(r => r.equipo === eq && r.estado !== "cancelado").forEach(r => {
       const a = Math.max(new Date(r.desde).getTime(), ini), b = Math.min(new Date(r.hasta).getTime(), fin);
       if (b <= a) return;
       const bar = el("button", "bar " + claseEstado(r), r.responsable);
       bar.style.left = pct(a) + "%"; bar.style.width = Math.max(pct(b) - pct(a), .8) + "%";
       bar.title = `${eq}: ${fmt(r.desde)} a ${fmt(r.hasta)} · ${r.responsable}`;
       bar.setAttribute("aria-label", bar.title);
-      bar.onclick = () => {
-        const it = document.querySelector(`[data-id="${r.id}"]`);
-        if (it) { it.scrollIntoView({ behavior:"smooth", block:"center" }); it.classList.add("flash"); setTimeout(() => it.classList.remove("flash"), 1400); }
-      };
+      bar.onclick = () => verDetalle(r.id);
       pista.append(bar);
     });
     fila.append(pista); cont.append(fila);
@@ -308,9 +341,11 @@ function pintarScope() {
   ejes.append(ticks); cont.append(ejes);
 
   // Cursor "Ahora": se ubica sobre la zona de pistas (78 px de etiqueta + 12 px de separación)
-  const cur = el("div", "ahora");
-  cur.style.left = `calc(90px + (100% - 90px) * ${pct(ahora.getTime()) / 100})`;
-  cont.append(cur);
+  if (dentro) {
+    const cur = el("div", "ahora");
+    cur.style.left = `calc(90px + (100% - 90px) * ${pct(ahora.getTime()) / 100})`;
+    cont.append(cur);
+  }
 }
 
 /* ---------- Lista ---------- */
@@ -328,9 +363,10 @@ function pintarLista() {
     h.append(el("b", null, r.equipo), el("span", null, `${fmt(r.desde)} a ${fmt(r.hasta)}`),
       el("span", "chip " + claseEstado(r), vencida(r) ? "Vencida" : r.estado === "retirado" ? "Retirado" : "Reservado"));
     li.append(h);
-    li.append(el("div", "m", [r.responsable, r.sector, r.cliente_caso, r.ubicacion].filter(Boolean).join(" · ")));
+    li.append(el("div", "m", [r.responsable, r.sector, r.cliente_caso && "Caso " + r.cliente_caso, r.cliente, r.servicio].filter(Boolean).join(" · ")));
     if (r.observacion) li.append(el("div", "m", r.observacion));
     const acc = el("div", "acc");
+    const bd = el("button", null, "Ver detalle"); bd.onclick = () => verDetalle(r.id); acc.append(bd);
     if (r.estado === "reservado") {
       const b1 = el("button", "p", "Retirar"); b1.onclick = () => accion(r.id, "retirado", "Equipo retirado");
       const b2 = el("button", null, "Cancelar reserva"); b2.onclick = () => { if (confirm("¿Cancelar esta reserva?")) accion(r.id, "cancelado", "Reserva cancelada"); };
@@ -393,10 +429,60 @@ F.addEventListener("submit", async (ev) => {
   try {
     await pedir("/api/reservas", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(v) });
     try { localStorage.setItem("veex_resp", v.responsable); } catch (_) {}
-    F.cliente_caso.value = ""; F.ubicacion.value = ""; F.observacion.value = "";
+    ["cliente_caso","cliente","servicio","descripcion_caso","ubicacion","observacion"].forEach(n => F[n].value = "");
     dlg.close(); aviso("Reserva guardada"); cargar();
   } catch (e) { AV.className = "aviso e"; AV.textContent = e.message; GO.disabled = false; }
 });
+
+/* ---------- Detalle del caso ---------- */
+const DET = document.getElementById("det"), DETC = document.getElementById("det-c");
+function verDetalle(id) {
+  const r = reservas.find(x => x.id === id);
+  if (!r) return;
+  DETC.replaceChildren();
+  const dl = el("dl");
+  const fila = (k, v) => { dl.append(el("dt", null, k), el("dd", null, v || "Sin datos")); };
+  fila("Equipo", r.equipo);
+  fila("Horario", `${fmt(r.desde)} a ${fmt(r.hasta)}`);
+  const chip = el("span", "chip " + claseEstado(r), vencida(r) ? "Devolución vencida" : { reservado:"Reservado", retirado:"Retirado", devuelto:"Devuelto", cancelado:"Cancelado" }[r.estado]);
+  dl.append(el("dt", null, "Estado")); const dd = el("dd"); dd.append(chip); dl.append(dd);
+  fila("Responsable", r.responsable + (r.sector ? ` (${r.sector})` : ""));
+  fila("Número de caso", r.cliente_caso);
+  fila("Cliente", r.cliente);
+  fila("Servicio asociado", r.servicio);
+  fila("Ubicación", r.ubicacion);
+  DETC.append(dl);
+  const d = el("div"); d.append(el("div", "dt", "Descripción del caso"));
+  d.firstChild.style.cssText = "color:var(--mut);font-size:13px;margin-bottom:6px";
+  d.append(el("div", "desc", r.descripcion_caso || "No se cargó una descripción."));
+  DETC.append(d);
+  if (r.observacion) { const o = el("div"); o.append(el("div", null, "Observación")); o.firstChild.style.cssText = "color:var(--mut);font-size:13px;margin-bottom:6px"; o.append(el("div", "desc", r.observacion)); DETC.append(o); }
+  const acc = el("div", "acc");
+  const cerrar = (f) => () => { DET.close(); f(); };
+  if (r.estado === "reservado") {
+    const b1 = el("button", "p", "Retirar"); b1.onclick = cerrar(() => accion(r.id, "retirado", "Equipo retirado"));
+    const b2 = el("button", null, "Cancelar reserva"); b2.onclick = cerrar(() => { if (confirm("¿Cancelar esta reserva?")) accion(r.id, "cancelado", "Reserva cancelada"); });
+    acc.append(b1, b2);
+  } else if (r.estado === "retirado") {
+    const b = el("button", "p", "Devolver"); b.onclick = cerrar(() => accion(r.id, "devuelto", "Equipo devuelto"));
+    acc.append(b);
+  }
+  DETC.append(acc);
+  DET.showModal();
+}
+document.getElementById("det-x").onclick = () => DET.close();
+DET.addEventListener("click", (e) => { if (e.target === DET) DET.close(); });
+
+/* ---------- Navegación de la línea de tiempo ---------- */
+const base = () => iniFijo ?? (ahora.getTime() - VENT_ANTES);
+document.getElementById("ant").onclick = () => { iniFijo = base() - 24 * H; pintarScope(); };
+document.getElementById("sig").onclick = () => { iniFijo = base() + 24 * H; pintarScope(); };
+document.getElementById("hoy").onclick = () => { iniFijo = null; document.getElementById("ir").value = ""; pintarScope(); };
+document.getElementById("ir").onchange = (e) => {
+  if (!e.target.value) return;
+  iniFijo = new Date(e.target.value + "T00:00:00-03:00").getTime();   // Argentina: UTC-3 todo el año
+  pintarScope();
+};
 
 /* ---------- Reloj, fondo y arranque ---------- */
 function reloj() {

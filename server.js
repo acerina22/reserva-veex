@@ -33,7 +33,7 @@ async function api(req, res, url) {
 
   if (req.method === "GET" && !m[1]) {
     const r = await pool.query(
-      `SELECT id, equipo, desde, hasta, sector, cliente_caso, ubicacion, responsable, observacion, estado
+      `SELECT id, equipo, desde, hasta, sector, cliente_caso, cliente, servicio, descripcion_caso, ubicacion, responsable, observacion, estado
        FROM reservas
        WHERE estado IN ('reservado','retirado') OR hasta > now() - interval '7 days'
        ORDER BY desde`
@@ -50,9 +50,9 @@ async function api(req, res, url) {
     if (!txt(b.responsable, 80)) return json(res, 400, { error: "Indicá el responsable." });
     try {
       const r = await pool.query(
-        `INSERT INTO reservas (equipo, desde, hasta, sector, cliente_caso, ubicacion, responsable, observacion)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-        [b.equipo, desde, hasta, txt(b.sector, 40), txt(b.cliente_caso), txt(b.ubicacion), txt(b.responsable, 80), txt(b.observacion, 1000)]
+        `INSERT INTO reservas (equipo, desde, hasta, sector, cliente_caso, cliente, servicio, descripcion_caso, ubicacion, responsable, observacion)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+        [b.equipo, desde, hasta, txt(b.sector, 40), txt(b.cliente_caso), txt(b.cliente), txt(b.servicio), txt(b.descripcion_caso, 1500), txt(b.ubicacion), txt(b.responsable, 80), txt(b.observacion, 1000)]
       );
       return json(res, 201, { id: r.rows[0].id });
     } catch (e) {
