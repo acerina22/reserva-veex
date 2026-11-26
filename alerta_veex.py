@@ -12,7 +12,7 @@ from veex_sheet import leer_reservas, vencidas, _f
 def enviar_alerta_slack(r):
     # Webhook clásico: variable "text". Webhook de Workflow Builder: poner en
     # SLACK_WEBHOOK_VAR el nombre de la variable que definiste (ej. "mensaje").
-    var = os.environ.get("SLACK_WEBHOOK_VAR", "text")
+    var = os.environ.get("SLACK_WEBHOOK_VAR") or "text"
     mensaje = {
         var: (
             f"⚠️ *Aviso de devolución pendiente — {r['equipo']}*\n"
