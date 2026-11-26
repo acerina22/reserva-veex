@@ -27,3 +27,8 @@ Render
 - Plan Starter o superior: el plan gratis se duerme y corta la conexión del bot.
 - Variables: SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SHEET_CSV_URL (cargarlas en el dashboard, no en el repo).
 - Alertas: un Cron Job de Render con `python alerta_veex.py` y SLACK_WEBHOOK_URL, SHEET_CSV_URL.
+
+Web de reservas (Node + Neon Postgres)
+- `server.js` + `public/index.html`. Variable: `DATABASE_URL` (cadena de conexión de Neon).
+- Build: `npm install` · Start: `node server.js`.
+- La base impide por restricción (`sin_solapes`) que dos reservas activas del mismo equipo se superpongan.
