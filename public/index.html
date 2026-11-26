@@ -7,23 +7,23 @@
 <title>VeEX · reservas</title>
 <style>
   :root {
-    --bg:#050912; --panel:rgba(8,15,30,.9); --line:#14275a; --line2:#2347a8;
-    --ink:#dbe8ff; --mut:#8aa2cc; --g:#3b82ff; --g2:#1d4fd8; --ok:#3fb27f;
+    --bg:#050912; --panel:rgba(8,15,30,.9); --line:#10306b; --line2:#1a56c9;
+    --ink:#dbe8ff; --mut:#8aa2cc; --g:#2e9bff; --g2:#0a6cff; --ok:#3fb27f;
     --cy:#a78bfa; --am:#ffb020; --rd:#ff4d6d;
     --mono: ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
   }
   * { box-sizing:border-box; }
   html { color-scheme:dark; }
   body { margin:0; font:15px/1.5 var(--mono); background:var(--bg); color:var(--ink); min-height:100vh; }
-  #rain { position:fixed; inset:0; width:100%; height:100%; z-index:0; opacity:.18; pointer-events:none; }
+  #rain { position:fixed; inset:0; width:100%; height:100%; z-index:0; opacity:.24; pointer-events:none; }
   .wrap { position:relative; z-index:1; max-width:1040px; margin:0 auto; padding:20px 16px 48px; display:grid; gap:18px; }
   header { padding:8px 2px 0; }
-  header h1 { margin:0; font-size:clamp(22px,4vw,30px); letter-spacing:.04em; color:var(--g); text-shadow:0 0 14px rgba(59,130,255,.55); }
+  header h1 { margin:0; font-size:clamp(22px,4vw,30px); letter-spacing:.04em; color:var(--g); text-shadow:0 0 14px rgba(46,155,255,.8); }
   header p { margin:6px 0 0; color:var(--mut); font-size:13px; }
   header p::before { content:"> "; color:var(--g2); }
   .reloj { margin-top:8px; font-size:12px; color:var(--mut); }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:18px; backdrop-filter:blur(3px);
-           box-shadow:0 0 0 1px rgba(59,130,255,.06), 0 8px 30px rgba(0,0,0,.5); position:relative; }
+           box-shadow:0 0 0 1px rgba(46,155,255,.1), 0 0 24px rgba(10,108,255,.12), 0 8px 30px rgba(0,0,0,.5); position:relative; }
   .panel::before { content:""; position:absolute; left:-1px; top:-1px; width:16px; height:16px; border-top:2px solid var(--g); border-left:2px solid var(--g); border-radius:6px 0 0 0; }
   .panel::after { content:""; position:absolute; right:-1px; bottom:-1px; width:16px; height:16px; border-bottom:2px solid var(--g); border-right:2px solid var(--g); border-radius:0 0 6px 0; }
   h2 { margin:0 0 10px; font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:var(--g); font-weight:700; }
@@ -42,8 +42,8 @@
   button { font:inherit; font-size:13px; color:var(--ink); background:transparent; border:1px solid var(--line2); border-radius:4px; padding:7px 14px; cursor:pointer; letter-spacing:.04em; min-height:36px; }
   button:hover { border-color:var(--g); color:var(--g); }
   button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline:2px solid var(--g); outline-offset:2px; }
-  button.p { background:#2f6bff; border-color:#3b82ff; color:#fff; font-weight:700; }
-  button.p:hover { background:#4f84ff; color:#fff; box-shadow:0 0 18px rgba(59,130,255,.6); }
+  button.p { background:#0a6cff; border-color:#2e9bff; color:#fff; font-weight:700; }
+  button.p:hover { background:#2e8bff; color:#fff; box-shadow:0 0 22px rgba(46,155,255,.8); }
   button:disabled { opacity:.5; cursor:wait; }
   form { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
   label { display:grid; gap:5px; font-size:12px; color:var(--mut); letter-spacing:.08em; text-transform:uppercase; }
@@ -226,7 +226,7 @@ function reloj() {
   addEventListener("resize", size_); size_();
   setInterval(() => {
     x.fillStyle = "rgba(5,9,18,.12)"; x.fillRect(0, 0, c.width, c.height);
-    x.fillStyle = "#2f6bff"; x.font = size + "px monospace";
+    x.fillStyle = "#1a7dff"; x.font = size + "px monospace";
     drops.forEach((y, i) => {
       x.fillText(glyphs[Math.floor(Math.random() * glyphs.length)], i * size, y * size);
       drops[i] = y * size > c.height && Math.random() > .975 ? 0 : y + 1;
