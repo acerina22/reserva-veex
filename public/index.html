@@ -31,7 +31,6 @@
   .st { display:flex; align-items:center; gap:10px; font-weight:700; font-size:16px; }
   .dot { width:11px; height:11px; border-radius:50%; background:currentColor; box-shadow:0 0 10px currentColor; flex:none; }
   .libre { color:var(--ok); } .retirado { color:var(--am); } .vencido { color:var(--rd); } .reservado { color:var(--cy); }
-  .vencido .dot { animation:pulse 1s ease-in-out infinite; }
   .meta { color:var(--mut); font-size:13px; margin-top:6px; word-break:break-word; }
   .meta b { color:var(--ink); font-weight:600; }
   ul { list-style:none; padding:0; margin:14px 0 0; display:grid; gap:10px; }
@@ -58,8 +57,6 @@
   #msg.o { display:block; color:var(--ok); border-color:var(--ok); background:rgba(63,178,127,.08); }
   .regla { font-size:12px; color:var(--mut); margin:14px 0 0; }
   .regla b { color:var(--g); }
-    @keyframes pulse { 50% { opacity:.35; } }
-  @media (prefers-reduced-motion: reduce) { .vencido .dot { animation:none; } #rain { display:none; } }
 </style>
 </head>
 <body>
