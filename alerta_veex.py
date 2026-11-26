@@ -1,6 +1,6 @@
 """Alerta de devoluciones vencidas. Correr con cron cada 30-60 min en horario laboral.
 
-Variables de entorno: SHEET_CSV_URL, SLACK_WEBHOOK_URL
+Variables de entorno: SLACK_WEBHOOK_URL (y opcional SLACK_WEBHOOK_VAR, VEEX_URL)
 """
 import os
 

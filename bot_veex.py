@@ -1,6 +1,8 @@
-"""@BotVeEX: responde el estado de los equipos cuando lo mencionan con la palabra 'veex'.
+"""Bot de Slack para consultar el estado de los VeEX.
 
-Variables de entorno: SLACK_BOT_TOKEN (xoxb-), SLACK_APP_TOKEN (xapp-), SHEET_CSV_URL
+Uso en Slack:  /veex   /veex 10g   /veex 1g   o mencionar al bot:  @BotVeEX veex
+Variables: SLACK_BOT_TOKEN (xoxb-), SLACK_APP_TOKEN (xapp-), opcional VEEX_URL, PORT (Render)
+Permisos del bot: commands, app_mentions:read, chat:write. Socket Mode activado.
 """
 import os
 import threading
@@ -9,24 +11,30 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from veex_sheet import EQUIPOS, leer_reservas, resumen_equipo
+from veex_sheet import leer_reservas, texto_estado
 
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
 
 
-@app.event("app_mention")
-def responder(event, say):
-    texto = event.get("text", "").lower()
-    if "veex" not in texto:
-        return
-    hilo = event.get("thread_ts") or event["ts"]
+def respuesta(pedido):
     try:
-        reservas = leer_reservas()
+        return texto_estado(leer_reservas(), pedido)
     except Exception as e:  # noqa: BLE001
-        say(text=f"No pude leer la planilla de reservas: {e}", thread_ts=hilo)
+        return f"No pude consultar las reservas: {e}"
+
+
+@app.command("/veex")
+def comando(ack, command, respond):
+    ack()  # Slack exige responder en 3 s; la consulta puede tardar si el servidor dormía
+    respond(response_type="ephemeral", text=respuesta(command.get("text", "")))
+
+
+@app.event("app_mention")
+def mencion(event, say):
+    texto = event.get("text", "")
+    if "veex" not in texto.lower():
         return
-    pedidos = [e for e in EQUIPOS if e.split()[-1].lower() in texto] or list(EQUIPOS)
-    say(text="\n\n".join(resumen_equipo(reservas, e) for e in pedidos), thread_ts=hilo)
+    say(text=respuesta(texto), thread_ts=event.get("thread_ts") or event["ts"])
 
 
 class _Health(BaseHTTPRequestHandler):
@@ -43,9 +51,7 @@ def _health_server():
     # Render (web service) exige un puerto abierto; Socket Mode no lo necesita.
     port = os.environ.get("PORT")
     if port:
-        threading.Thread(
-            target=HTTPServer(("0.0.0.0", int(port)), _Health).serve_forever, daemon=True
-        ).start()
+        threading.Thread(target=HTTPServer(("0.0.0.0", int(port)), _Health).serve_forever, daemon=True).start()
 
 
 if __name__ == "__main__":

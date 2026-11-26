@@ -1,54 +1,48 @@
-"""Lectura de la planilla de reservas VeEX (Google Sheet publicada como CSV).
+"""Lectura de las reservas VeEX desde la web (API JSON) y cálculo de estados.
 
-Columnas esperadas: Equipo, Desde, Hasta, Sector, Cliente / Caso, Ubicación,
-Responsable, Observación, Estado (Reservado | Retirado | Devuelto | Cancelado).
-Formato de fechas: DD/MM/YYYY HH:MM
+Variable opcional: VEEX_URL (por defecto https://reserva-veex.onrender.com/api/reservas)
 """
-import csv
-import io
+import json
 import os
-from datetime import datetime
+import urllib.request
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
-import requests
-
-FMT = "%d/%m/%Y %H:%M"
+TZ = ZoneInfo("America/Argentina/Buenos_Aires")
+URL = os.environ.get("VEEX_URL") or "https://reserva-veex.onrender.com/api/reservas"
 EQUIPOS = ("VeEX 10G", "VeEX 1G")
 
 
 def _fecha(valor):
-    valor = (valor or "").strip()
-    try:
-        return datetime.strptime(valor, FMT) if valor else None
-    except ValueError:
-        return None
+    return datetime.fromisoformat(valor.replace("Z", "+00:00")) if valor else None
 
 
 def leer_reservas(url=None):
-    url = url or os.environ["SHEET_CSV_URL"]
-    r = requests.get(url, timeout=10)
-    r.raise_for_status()
-    r.encoding = "utf-8"
-    filas = []
-    for f in csv.DictReader(io.StringIO(r.text)):
-        filas.append(
-            {
-                "equipo": (f.get("Equipo") or "").strip(),
-                "desde": _fecha(f.get("Desde")),
-                "hasta": _fecha(f.get("Hasta")),
-                "sector": (f.get("Sector") or "").strip(),
-                "cliente_caso": (f.get("Cliente / Caso") or "-").strip(),
-                "ubicacion": (f.get("Ubicación") or "-").strip(),
-                "responsable": (f.get("Responsable") or "Sin asignar").strip(),
-                "observacion": (f.get("Observación") or "").strip(),
-                "estado": (f.get("Estado") or "").strip().lower(),
-            }
-        )
-    return filas
+    # La primera consulta puede tardar si el servidor gratuito estaba dormido.
+    with urllib.request.urlopen(url or URL, timeout=90) as r:
+        datos = json.loads(r.read().decode("utf-8"))
+    return [
+        {
+            "id": f["id"],
+            "equipo": f["equipo"],
+            "desde": _fecha(f["desde"]),
+            "hasta": _fecha(f["hasta"]),
+            "sector": f.get("sector") or "",
+            "cliente_caso": f.get("cliente_caso") or "-",
+            "cliente": f.get("cliente") or "",
+            "servicio": f.get("servicio") or "",
+            "ubicacion": f.get("ubicacion") or "-",
+            "responsable": f.get("responsable") or "Sin asignar",
+            "observacion": f.get("observacion") or "",
+            "estado": (f.get("estado") or "").lower(),
+        }
+        for f in datos["reservas"]
+    ]
 
 
 def vencidas(reservas, ahora=None):
-    """Reservas en estado Retirado cuyo horario 'Hasta' ya pasó."""
-    ahora = ahora or datetime.now()
+    """Reservas en estado retirado cuyo horario 'hasta' ya pasó."""
+    ahora = ahora or datetime.now(timezone.utc)
     return [r for r in reservas if r["estado"] == "retirado" and r["hasta"] and ahora > r["hasta"]]
 
 
@@ -56,31 +50,42 @@ def estado_equipo(reservas, equipo):
     """Devuelve (retirada_actual, [reservas_futuras]) para un equipo."""
     propias = [r for r in reservas if r["equipo"].lower() == equipo.lower()]
     retirada = next((r for r in propias if r["estado"] == "retirado"), None)
-    futuras = sorted(
-        (r for r in propias if r["estado"] == "reservado" and r["desde"]),
-        key=lambda r: r["desde"],
-    )
+    futuras = sorted((r for r in propias if r["estado"] == "reservado"), key=lambda r: r["desde"])
     return retirada, futuras
 
 
 def _f(d):
-    return d.strftime("%d/%m %H:%M") if d else "?"
+    return d.astimezone(TZ).strftime("%d/%m %H:%M") if d else "?"
 
 
 def resumen_equipo(reservas, equipo):
     retirada, futuras = estado_equipo(reservas, equipo)
     if retirada:
+        ahora = datetime.now(timezone.utc)
+        marca = "Devolución vencida 🔴" if ahora > retirada["hasta"] else "Retirado 🔄"
         txt = (
-            f"📌 *{equipo}*\nEstado: Retirado 🔄\nSector: {retirada['sector']}\n"
-            f"Cliente / caso: {retirada['cliente_caso']}\nUbicación: {retirada['ubicacion']}\n"
-            f"Responsable: {retirada['responsable']}\nDisponible desde: {_f(retirada['hasta'])}"
+            f"📌 *{equipo}*\nEstado: {marca}\nLo tiene: {retirada['responsable']}"
+            + (f" ({retirada['sector']})" if retirada["sector"] else "")
+            + f"\nCaso: {retirada['cliente_caso']}"
         )
+        if retirada["cliente"]:
+            txt += f"\nCliente: {retirada['cliente']}"
+        if retirada["servicio"]:
+            txt += f"\nServicio: {retirada['servicio']}"
+        txt += f"\nUbicación: {retirada['ubicacion']}\nDevolución prevista: {_f(retirada['hasta'])}"
         if retirada["observacion"]:
             txt += f"\nObservación: {retirada['observacion']}"
     else:
-        txt = f"📌 *{equipo}*\nEstado: Devuelto ✅ (disponible)"
+        txt = f"📌 *{equipo}*\nEstado: Disponible ✅"
     if futuras:
         txt += "\nPróximas reservas 📅:"
         for r in futuras[:5]:
             txt += f"\n• {_f(r['desde'])} – {_f(r['hasta'])} · {r['responsable']} · {r['cliente_caso']}"
     return txt
+
+
+def texto_estado(reservas, pedido=""):
+    """Texto de respuesta para el bot. 'pedido' puede incluir 10g o 1g."""
+    pedido = pedido.lower()
+    elegidos = [e for e in EQUIPOS if e.split()[-1].lower() in pedido] or list(EQUIPOS)
+    return "\n\n".join(resumen_equipo(reservas, e) for e in elegidos)
