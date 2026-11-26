@@ -77,8 +77,17 @@
   .ticks{position:relative;height:28px;color:var(--faint);font-size:12px}
   .ticks span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
   .ticks span.dia{color:var(--ice);font-weight:600}
-  .ahora{position:absolute;top:0;bottom:28px;width:2px;background:var(--ice);box-shadow:0 0 12px var(--ice);z-index:2;pointer-events:none}
-  .ahora::before{content:"Ahora";position:absolute;top:-2px;left:50%;transform:translate(-50%,-100%);font-size:11px;font-weight:600;color:var(--bg);background:var(--ice);border-radius:5px;padding:0 6px}
+  .ahora{position:absolute;top:0;bottom:28px;width:2px;margin-left:-1px;background:var(--ice);box-shadow:0 0 12px var(--ice);z-index:2;cursor:ew-resize;touch-action:none}
+  .ahora::after{content:"";position:absolute;top:0;bottom:0;left:-14px;right:-14px}
+  .ahora b{position:absolute;left:50%;top:50%;width:14px;height:34px;transform:translate(-50%,-50%);border-radius:8px;background:var(--ice);box-shadow:0 0 14px rgba(191,212,255,.7)}
+  .ahora.mov::before{background:var(--blue2);color:#fff}
+  .ahora.mov,.ahora.mov b{background:var(--blue2);box-shadow:0 0 14px var(--blue2)}
+  .pista{cursor:crosshair}
+  .viendo{display:none;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px;padding:10px 14px;border:1px solid var(--line2);border-radius:12px;background:rgba(31,91,255,.12)}
+  .viendo.on{display:flex}
+  .viendo span{font-weight:600}
+  .eq.reservado{--c:var(--blue2)} .eq.devuelto{--c:var(--faint)}
+  .ahora::before{content:attr(data-et);position:absolute;top:-2px;left:50%;transform:translate(-50%,-100%);font-size:11px;font-weight:600;color:var(--bg);background:var(--ice);border-radius:5px;padding:1px 8px;white-space:nowrap}
   .leyenda{display:flex;gap:16px;flex-wrap:wrap;margin-top:6px;color:var(--mut);font-size:12px}
   .leyenda i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 
@@ -154,13 +163,14 @@
   <header class="estado">
     <h1 id="titular">Cargando el estado de los equipos…</h1>
     <p>Revisá esta página antes de usar un equipo. Si no está cargado, no está reservado.</p>
+    <div class="viendo" id="viendo"></div>
   </header>
 
   <section class="equipos" id="equipos" aria-label="Estado de cada equipo"></section>
 
   <section class="sec">
     <h3>Próximas 72 horas</h3>
-    <p>Cada barra es una reserva. Tocá una para ver el detalle del caso.</p>
+    <p>Cada barra es una reserva; tocá una para ver el detalle. Arrastrá el marcador para ver quién tiene cada equipo en otro día u hora.</p>
     <div class="nav">
       <span class="rango" id="rango"></span>
       <button type="button" id="ant" aria-label="Ver un día antes">‹ Día anterior</button>
@@ -168,7 +178,7 @@
       <button type="button" id="sig" aria-label="Ver un día después">Día siguiente ›</button>
       <input type="date" id="ir" aria-label="Ir a una fecha">
     </div>
-    <p class="fuera" id="fuera">La marca de "Ahora" está fuera de esta vista. Tocá "Hoy" para volver.</p>
+    <p class="fuera" id="fuera">El marcador está fuera de esta vista. Tocá "Hoy" para volver a ahora.</p>
     <div class="scope"><div class="scope-in" id="scope"></div>
       <div class="leyenda"><span><i style="background:var(--blue2)"></i>Reservado</span><span><i style="background:var(--am)"></i>Retirado</span><span><i style="background:var(--rd)"></i>Devolución vencida</span></div>
     </div>
@@ -216,7 +226,7 @@
 const TZ = "America/Argentina/Buenos_Aires";
 const EQUIPOS = ["VeEX 10G", "VeEX 1G"];
 const H = 3600000, VENT_ANTES = 6 * H, VENT_TOTAL = 72 * H;
-let ahora = new Date(), reservas = [], iniFijo = null;
+let ahora = new Date(), reservas = [], iniFijo = null, momento = null, VENT = { ini: 0, fin: 0 };
 
 const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
 const fmt = (v) => new Date(v).toLocaleString("es-AR", { timeZone: TZ, weekday:"short", day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit", hour12:false }).replace(/,/g, "");
@@ -302,12 +312,104 @@ function tarjeta(eq) {
   return c;
 }
 
+/* ---------- Estado en un momento elegido ---------- */
+const ocupaEn = (eq, t) => reservas.find(r => r.equipo === eq && r.estado !== "cancelado" && new Date(r.desde).getTime() <= t && t < new Date(r.hasta).getTime());
+
+function tarjetaEn(eq, t) {
+  const r = ocupaEn(eq, t);
+  const clase = !r ? "libre" : r.estado === "retirado" ? "retirado" : r.estado === "reservado" ? "reservado" : "devuelto";
+  const c = el("article", "eq " + clase);
+  const nm = el("div", "nm");
+  nm.append(el("h2", null, eq), el("span", "tag", eq.endsWith("10G") ? "10 Gbps" : "1 Gbps"));
+  const st = el("div", "st");
+  st.append(el("span", "led"), el("span", null, !r ? "Libre" : { reservado:"Asignado · reservado", retirado:"Asignado · retirado", devuelto:"Asignado · ya devuelto" }[r.estado]));
+  c.append(nm, st);
+  const acc = el("div", "acc");
+  if (r) {
+    const g = el("div", "grande", "Asignado a " + r.responsable);
+    g.append(el("small", null, `${fmt(r.desde)} a ${fmt(r.hasta)}`));
+    c.append(g);
+    const d = el("p", "datos");
+    [["Caso", r.cliente_caso], ["Cliente", r.cliente], ["Servicio", r.servicio], ["Ubicación", r.ubicacion]].forEach(([k, v]) => {
+      if (!v) return; const s = el("span"); s.append(document.createTextNode(k + " "), Object.assign(el("b"), { textContent: v })); d.append(s);
+    });
+    c.append(d);
+    const b = el("button", null, "Ver detalle"); b.onclick = () => verDetalle(r.id); acc.append(b);
+  } else {
+    const sig = reservas.filter(x => x.equipo === eq && x.estado !== "cancelado" && new Date(x.desde).getTime() > t).sort((a, b) => new Date(a.desde) - new Date(b.desde))[0];
+    const g = el("div", "grande", "Libre en ese horario");
+    g.append(el("small", null, sig ? `Próxima reserva: ${fmt(sig.desde)}` : "Sin reservas posteriores"));
+    c.append(g);
+    if (t >= ahora.getTime() - 15 * 60000) { const b = el("button", "p", `Reservar ${eq} desde ahí`); b.onclick = () => abrir(eq, t); acc.append(b); }
+  }
+  c.append(acc);
+  return c;
+}
+
+function pintarTarjetas() {
+  const v = document.getElementById("viendo"), tit = document.getElementById("titular"), eqs = document.getElementById("equipos");
+  v.replaceChildren();
+  if (momento == null) {
+    v.className = "viendo"; tit.textContent = titular(); eqs.replaceChildren(...EQUIPOS.map(tarjeta)); return;
+  }
+  const partes = EQUIPOS.map(eq => { const r = ocupaEn(eq, momento); return `${eq} ${r ? "está asignado a " + r.responsable : "está libre"}`; });
+  tit.textContent = `${fmt(momento)}: ${partes[0]} y ${partes[1]}.`;
+  eqs.replaceChildren(...EQUIPOS.map(eq => tarjetaEn(eq, momento)));
+  v.className = "viendo on";
+  const s = el("span", null, "Estás viendo el estado de otro momento, no el actual.");
+  const b = el("button", null, "Volver a ahora"); b.onclick = () => { momento = null; pintar(); };
+  v.append(s, b);
+}
+
+/* ---------- Marcador arrastrable ---------- */
+function posicionarMarca() {
+  const m = document.getElementById("marca");
+  if (!m) return;
+  const p = momento ?? ahora.getTime();
+  m.style.left = `calc(90px + (100% - 90px) * ${(p - VENT.ini) / VENT_TOTAL})`;
+  m.dataset.et = momento == null ? "Ahora" : fmt(momento);
+  m.setAttribute("aria-valuetext", m.dataset.et);
+  m.classList.toggle("mov", momento != null);
+}
+
+function fijarMomento(t) {
+  const paso = 15 * 60000;
+  t = Math.round(t / paso) * paso;
+  momento = Math.abs(t - ahora.getTime()) <= paso / 2 ? null : t;
+  if (document.getElementById("marca")) posicionarMarca(); else pintarScope();
+  pintarTarjetas();
+}
+
+function tDesdeX(cont, x) {
+  const r = cont.getBoundingClientRect(), izq = r.left + 90, w = r.width - 90;
+  return VENT.ini + Math.min(1, Math.max(0, (x - izq) / w)) * VENT_TOTAL;
+}
+
+function activarMarca(m, cont) {
+  let arrastra = false;
+  m.addEventListener("pointerdown", (e) => { arrastra = true; m.setPointerCapture(e.pointerId); e.preventDefault(); });
+  m.addEventListener("pointermove", (e) => { if (arrastra) fijarMomento(tDesdeX(cont, e.clientX)); });
+  const soltar = () => { arrastra = false; };
+  m.addEventListener("pointerup", soltar); m.addEventListener("pointercancel", soltar);
+  m.addEventListener("keydown", (e) => {
+    const paso = e.shiftKey ? H : 15 * 60000;
+    let p = momento ?? ahora.getTime();
+    if (e.key === "ArrowRight") p += paso;
+    else if (e.key === "ArrowLeft") p -= paso;
+    else if (e.key === "Home") { momento = null; posicionarMarca(); pintarTarjetas(); e.preventDefault(); return; }
+    else return;
+    e.preventDefault();
+    fijarMomento(Math.min(VENT.fin, Math.max(VENT.ini, p)));
+  });
+}
+
 /* ---------- Línea de tiempo ---------- */
 function pintarScope() {
   const cont = document.getElementById("scope");
   cont.replaceChildren();
   const ini = iniFijo ?? (ahora.getTime() - VENT_ANTES), fin = ini + VENT_TOTAL;
-  const dentro = ahora.getTime() >= ini && ahora.getTime() <= fin;
+  const punto = momento ?? ahora.getTime(), dentro = punto >= ini && punto <= fin;
+  VENT = { ini, fin };
   document.getElementById("rango").textContent = `${diaTZ(new Date(ini))} al ${diaTZ(new Date(fin - 1))}`;
   document.getElementById("fuera").classList.toggle("on", !dentro);
   const pct = (t) => ((t - ini) / VENT_TOTAL) * 100;
@@ -326,6 +428,7 @@ function pintarScope() {
       bar.onclick = () => verDetalle(r.id);
       pista.append(bar);
     });
+    pista.addEventListener("pointerdown", (e) => { if (e.target === pista) fijarMomento(tDesdeX(cont, e.clientX)); });
     fila.append(pista); cont.append(fila);
   });
 
@@ -342,9 +445,12 @@ function pintarScope() {
 
   // Cursor "Ahora": se ubica sobre la zona de pistas (78 px de etiqueta + 12 px de separación)
   if (dentro) {
-    const cur = el("div", "ahora");
-    cur.style.left = `calc(90px + (100% - 90px) * ${pct(ahora.getTime()) / 100})`;
+    const cur = el("div", "ahora"); cur.id = "marca";
+    cur.tabIndex = 0; cur.setAttribute("role", "slider"); cur.setAttribute("aria-label", "Momento que se está viendo");
+    cur.append(el("b"));
     cont.append(cur);
+    posicionarMarca();
+    activarMarca(cur, cont);
   }
 }
 
@@ -380,9 +486,7 @@ function pintarLista() {
 }
 
 function pintar() {
-  document.getElementById("titular").textContent = titular();
-  document.getElementById("equipos").replaceChildren(...EQUIPOS.map(tarjeta));
-  pintarScope(); pintarLista();
+  pintarTarjetas(); pintarScope(); pintarLista();
 }
 
 async function cargar() {
@@ -396,8 +500,8 @@ async function cargar() {
 const dlg = document.getElementById("dlg"), F = document.getElementById("f"), AV = document.getElementById("aviso"), GO = document.getElementById("go");
 const local = (d) => { const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 
-function abrir(eq) {
-  const d = new Date(); d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0);
+function abrir(eq, desdeMs) {
+  const d = desdeMs ? new Date(desdeMs) : new Date(); d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0);
   if (eq) F.equipo.value = eq;
   F.desde.value = local(d); F.hasta.value = local(new Date(d.getTime() + 2 * H));
   AV.className = "aviso"; AV.textContent = "";
@@ -477,7 +581,7 @@ DET.addEventListener("click", (e) => { if (e.target === DET) DET.close(); });
 const base = () => iniFijo ?? (ahora.getTime() - VENT_ANTES);
 document.getElementById("ant").onclick = () => { iniFijo = base() - 24 * H; pintarScope(); };
 document.getElementById("sig").onclick = () => { iniFijo = base() + 24 * H; pintarScope(); };
-document.getElementById("hoy").onclick = () => { iniFijo = null; document.getElementById("ir").value = ""; pintarScope(); };
+document.getElementById("hoy").onclick = () => { iniFijo = null; momento = null; document.getElementById("ir").value = ""; pintar(); };
 document.getElementById("ir").onchange = (e) => {
   if (!e.target.value) return;
   iniFijo = new Date(e.target.value + "T00:00:00-03:00").getTime();   // Argentina: UTC-3 todo el año
