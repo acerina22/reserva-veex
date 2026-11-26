@@ -27,7 +27,45 @@ function leerBody(req) {
 const txt = (v, max = 300) => String(v ?? "").trim().slice(0, max);
 const fecha = (v) => { const d = new Date(v); return isNaN(d) ? null : d; };
 
+const TZ = "America/Argentina/Buenos_Aires";
+
+async function estadisticas(res, url) {
+  const dias = Math.min(90, Math.max(7, Number(url.searchParams.get("dias")) || 14));
+  const porDia = await pool.query(
+    `WITH dias AS (
+       SELECT generate_series((now() AT TIME ZONE $1)::date - ($2::int - 1), (now() AT TIME ZONE $1)::date + 7, interval '1 day')::date AS d)
+     SELECT to_char(d,'YYYY-MM-DD') AS dia, r.equipo,
+       SUM(EXTRACT(EPOCH FROM (LEAST(r.hasta, ((d+1)::timestamp AT TIME ZONE $1)) - GREATEST(r.desde, (d::timestamp AT TIME ZONE $1))))/3600.0) AS horas
+     FROM dias JOIN reservas r ON r.estado <> 'cancelado'
+       AND r.desde < ((d+1)::timestamp AT TIME ZONE $1) AND r.hasta > (d::timestamp AT TIME ZONE $1)
+     GROUP BY d, r.equipo ORDER BY d`, [TZ, dias]);
+  const porSector = await pool.query(
+    `SELECT COALESCE(NULLIF(sector,''),'Sin sector') AS sector, count(*)::int AS reservas,
+            ROUND(SUM(EXTRACT(EPOCH FROM (hasta - desde))/3600.0)::numeric,1)::float AS horas
+     FROM reservas WHERE estado <> 'cancelado' AND desde >= now() - ($1::int * interval '1 day')
+     GROUP BY 1 ORDER BY 2 DESC`, [dias]);
+  const resumen = await pool.query(
+    `SELECT count(*)::int AS reservas,
+            COALESCE(ROUND(SUM(EXTRACT(EPOCH FROM (LEAST(hasta, now()) - GREATEST(desde, now() - ($1::int * interval '1 day'))))/3600.0)::numeric,1),0)::float AS horas_usadas,
+            count(*) FILTER (WHERE estado='retirado' AND hasta < now())::int AS vencidas
+     FROM reservas WHERE estado <> 'cancelado' AND hasta > now() - ($1::int * interval '1 day') AND desde < now()`, [dias]);
+  return json(res, 200, { dias, porDia: porDia.rows.map(r => ({ ...r, horas: Number(r.horas) })), porSector: porSector.rows, resumen: resumen.rows[0] });
+}
+
+const celda = (v) => { const t = v instanceof Date ? v.toISOString() : String(v ?? ""); return /[",\n;]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+
+async function exportarCsv(res) {
+  const r = await pool.query(
+    `SELECT id, equipo, desde, hasta, estado, sector, cliente_caso, cliente, servicio, descripcion_caso, ubicacion, responsable, observacion FROM reservas ORDER BY desde DESC`);
+  const cols = ["id","equipo","desde","hasta","estado","sector","cliente_caso","cliente","servicio","descripcion_caso","ubicacion","responsable","observacion"];
+  const csv = "\uFEFF" + [cols.join(",")].concat(r.rows.map(f => cols.map(c => celda(f[c])).join(","))).join("\r\n");
+  res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="reservas-veex.csv"', "Cache-Control": "no-store" });
+  res.end(csv);
+}
+
 async function api(req, res, url) {
+  if (req.method === "GET" && url.pathname === "/api/estadisticas") return estadisticas(res, url);
+  if (req.method === "GET" && url.pathname === "/api/reservas.csv") return exportarCsv(res);
   const m = url.pathname.match(/^\/api\/reservas(?:\/(\d+)\/(estado|extender))?$/);
   if (!m) return json(res, 404, { error: "no existe" });
 

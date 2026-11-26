@@ -109,6 +109,18 @@
   .det .acc{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
   @media (max-width:520px){.det dl{grid-template-columns:1fr;gap:2px}.det dt{margin-top:8px}}
 
+  /* Uso de los equipos */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;display:grid;gap:2px}
+  .kpi b{font:700 28px var(--display);letter-spacing:-.01em}
+  .kpi span{color:var(--mut);font-size:13px}
+  .graficos{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+  .gr{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;height:300px;position:relative}
+  @media (max-width:760px){.graficos{grid-template-columns:1fr}}
+  .dtit{color:var(--mut);font-size:13px;margin-bottom:6px}
+  a.btn{display:inline-flex;align-items:center;text-decoration:none;border:1px solid var(--line2);border-radius:10px;padding:6px 14px;min-height:38px;font-size:13px;color:var(--ink)}
+  a.btn:hover{border-color:var(--blue2);background:rgba(76,134,255,.1)}
+
   /* Lista */
   .lista{display:grid;gap:12px;padding:0;margin:0;list-style:none}
   .it{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;display:grid;grid-template-columns:1fr auto;gap:8px 18px;align-items:center;transition:border-color .3s,box-shadow .3s}
@@ -184,6 +196,22 @@
     </div>
   </section>
 
+  <section class="sec" id="uso">
+    <h3>Uso de los equipos</h3>
+    <p>Horas reservadas por día (con la próxima semana) y reservas por sector.</p>
+    <div class="nav">
+      <label style="display:flex;gap:8px;align-items:center;flex-direction:row">Período
+        <select id="dias" style="width:auto;min-height:38px"><option value="7">Últimos 7 días</option><option value="14" selected>Últimos 14 días</option><option value="30">Últimos 30 días</option><option value="90">Últimos 90 días</option></select>
+      </label>
+      <a class="btn" href="/api/reservas.csv" download>Exportar a CSV</a>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="graficos" id="graficos">
+      <div class="gr"><canvas id="gDia" aria-label="Horas reservadas por día y equipo" role="img"></canvas></div>
+      <div class="gr"><canvas id="gSector" aria-label="Reservas por sector" role="img"></canvas><p id="sinDatos" style="display:none;position:absolute;inset:0;margin:0;color:var(--mut);text-align:center;padding-top:130px">Todavía no hay reservas en este período.</p></div>
+    </div>
+  </section>
+
   <section class="sec">
     <h3>Reservas activas</h3>
     <p>Retirá el equipo cuando lo busques y devolvelo cuando termines.</p>
@@ -222,13 +250,21 @@
 </dialog>
 <div id="toast" role="status" aria-live="polite"></div>
 
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
 const TZ = "America/Argentina/Buenos_Aires";
 const EQUIPOS = ["VeEX 10G", "VeEX 1G"];
-const H = 3600000, VENT_ANTES = 6 * H, VENT_TOTAL = 72 * H;
-let ahora = new Date(), reservas = [], iniFijo = null, momento = null, VENT = { ini: 0, fin: 0 };
+const H = 3600000, VENT_ANTES = 6 * H, VENT_TOTAL = 72 * H, PASO = 15 * 60000;
+let ahora = new Date(), reservas = [], iniFijo = null, momento = null, VENT = { ini: 0, fin: 0 }, graficos = {};
 
-const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
+/* ---------- Utilidades ---------- */
+const el = (tag, cls, texto) => {
+  const $e = $("<" + tag + ">");
+  if (cls) $e.addClass(cls);
+  if (texto != null) $e.text(texto);
+  return $e;
+};
 const fmt = (v) => new Date(v).toLocaleString("es-AR", { timeZone: TZ, weekday:"short", day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit", hour12:false }).replace(/,/g, "");
 const horaTZ = (d) => Number(d.toLocaleString("en-GB", { timeZone: TZ, hour:"2-digit", hour12:false })) % 24;
 const diaTZ = (d) => d.toLocaleString("es-AR", { timeZone: TZ, weekday:"short", day:"2-digit" }).replace(/,/g, "");
@@ -245,25 +281,27 @@ function lapso(hasta) {
 
 let tt;
 function aviso(texto, error) {
-  const t = document.getElementById("toast");
-  t.textContent = texto; t.className = "on" + (error ? " err" : "");
-  clearTimeout(tt); tt = setTimeout(() => { t.className = ""; }, 3800);
+  $("#toast").text(texto).attr("class", "on" + (error ? " err" : ""));
+  clearTimeout(tt);
+  tt = setTimeout(() => $("#toast").attr("class", ""), 3800);
 }
 
-async function pedir(url, opts) {
-  const r = await fetch(url, opts);
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.error || "No se pudo completar la acción.");
-  return d;
+// Llamada a la API con jQuery. Con "datos" hace POST en JSON; sin datos, GET.
+function pedir(url, datos) {
+  return new Promise((ok, fallo) => {
+    $.ajax({ url, method: datos ? "POST" : "GET", contentType: "application/json", data: datos ? JSON.stringify(datos) : undefined, dataType: "json", cache: false })
+      .done(ok)
+      .fail((x) => fallo(new Error((x.responseJSON && x.responseJSON.error) || "No se pudo completar la acción.")));
+  });
 }
 
 async function accion(id, estado, ok) {
-  try {
-    await pedir(`/api/reservas/${id}/estado`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ estado }) });
-    aviso(ok);
-  } catch (e) { aviso(e.message, true); }
+  try { await pedir(`/api/reservas/${id}/estado`, { estado }); aviso(ok); }
+  catch (e) { aviso(e.message, true); }
   cargar();
 }
+
+const par = (k, v) => $("<span>").append(document.createTextNode(k + " "), $("<b>").text(v));
 
 /* ---------- Titular y tarjetas ---------- */
 function estadoDe(eq) {
@@ -279,37 +317,35 @@ function titular() {
   return `${frase(EQUIPOS[0], e[0])} y ${frase(EQUIPOS[1], e[1])}.`;
 }
 
+function cabeceraTarjeta(eq, etiqueta) {
+  return [
+    el("div", "nm").append(el("h2", null, eq), el("span", "tag", eq.endsWith("10G") ? "10 Gbps" : "1 Gbps")),
+    el("div", "st").append(el("span", "led"), el("span", null, etiqueta))
+  ];
+}
+
 function tarjeta(eq) {
   const { ret, prox, clase } = estadoDe(eq);
-  const c = el("article", "eq " + clase);
-  const nm = el("div", "nm");
-  nm.append(el("h2", null, eq), el("span", "tag", eq.endsWith("10G") ? "10 Gbps" : "1 Gbps"));
-  const st = el("div", "st");
-  st.append(el("span", "led"), el("span", null, clase === "libre" ? "Disponible" : clase === "retirado" ? "Retirado" : "Devolución vencida"));
-  c.append(nm, st);
-
+  const $c = el("article", "eq " + clase);
+  $c.append(cabeceraTarjeta(eq, clase === "libre" ? "Disponible" : clase === "retirado" ? "Retirado" : "Devolución vencida"));
+  const $acc = el("div", "acc");
   if (ret) {
     const l = lapso(ret.hasta);
-    const g = el("div", "grande", l.tarde ? `Vencido hace ${l.txt}` : `Quedan ${l.txt}`);
-    g.append(el("small", null, `Devolución prevista: ${fmt(ret.hasta)}`));
-    c.append(g);
-    const d = el("p", "datos");
-    const fila = (k, v) => { if (!v) return; const s = el("span"); s.append(document.createTextNode(k + " "), Object.assign(el("b"), { textContent: v })); d.append(s); };
-    fila("Lo tiene", ret.responsable + (ret.sector ? ` (${ret.sector})` : ""));
-    fila("Caso", ret.cliente_caso); fila("Ubicación", ret.ubicacion);
-    c.append(d);
-    const acc = el("div", "acc");
-    const b = el("button", "p", "Devolver"); b.onclick = () => accion(ret.id, "devuelto", "Equipo devuelto");
-    acc.append(b); c.append(acc);
+    $c.append(el("div", "grande", l.tarde ? `Vencido hace ${l.txt}` : `Quedan ${l.txt}`).append(el("small", null, `Devolución prevista: ${fmt(ret.hasta)}`)));
+    const $d = el("p", "datos");
+    $d.append(par("Lo tiene", ret.responsable + (ret.sector ? ` (${ret.sector})` : "")));
+    if (ret.cliente_caso) $d.append(par("Caso", ret.cliente_caso));
+    if (ret.cliente) $d.append(par("Cliente", ret.cliente));
+    if (ret.servicio) $d.append(par("Servicio", ret.servicio));
+    if (ret.ubicacion) $d.append(par("Ubicación", ret.ubicacion));
+    $c.append($d);
+    $acc.append(el("button", null, "Ver detalle").on("click", () => verDetalle(ret.id)),
+                el("button", "p", "Devolver").on("click", () => accion(ret.id, "devuelto", "Equipo devuelto")));
   } else {
-    const g = el("div", "grande", "Libre ahora");
-    g.append(el("small", null, prox ? `Próxima reserva: ${fmt(prox.desde)}` : "Sin reservas próximas"));
-    c.append(g);
-    const acc = el("div", "acc");
-    const b = el("button", "p", `Reservar ${eq}`); b.onclick = () => abrir(eq);
-    acc.append(b); c.append(acc);
+    $c.append(el("div", "grande", "Libre ahora").append(el("small", null, prox ? `Próxima reserva: ${fmt(prox.desde)}` : "Sin reservas próximas")));
+    $acc.append(el("button", "p", `Reservar ${eq}`).on("click", () => abrir(eq)));
   }
-  return c;
+  return $c.append($acc);
 }
 
 /* ---------- Estado en un momento elegido ---------- */
@@ -318,176 +354,143 @@ const ocupaEn = (eq, t) => reservas.find(r => r.equipo === eq && r.estado !== "c
 function tarjetaEn(eq, t) {
   const r = ocupaEn(eq, t);
   const clase = !r ? "libre" : r.estado === "retirado" ? "retirado" : r.estado === "reservado" ? "reservado" : "devuelto";
-  const c = el("article", "eq " + clase);
-  const nm = el("div", "nm");
-  nm.append(el("h2", null, eq), el("span", "tag", eq.endsWith("10G") ? "10 Gbps" : "1 Gbps"));
-  const st = el("div", "st");
-  st.append(el("span", "led"), el("span", null, !r ? "Libre" : { reservado:"Asignado · reservado", retirado:"Asignado · retirado", devuelto:"Asignado · ya devuelto" }[r.estado]));
-  c.append(nm, st);
-  const acc = el("div", "acc");
+  const $c = el("article", "eq " + clase);
+  $c.append(cabeceraTarjeta(eq, !r ? "Libre" : { reservado:"Asignado · reservado", retirado:"Asignado · retirado", devuelto:"Asignado · ya devuelto" }[r.estado]));
+  const $acc = el("div", "acc");
   if (r) {
-    const g = el("div", "grande", "Asignado a " + r.responsable);
-    g.append(el("small", null, `${fmt(r.desde)} a ${fmt(r.hasta)}`));
-    c.append(g);
-    const d = el("p", "datos");
-    [["Caso", r.cliente_caso], ["Cliente", r.cliente], ["Servicio", r.servicio], ["Ubicación", r.ubicacion]].forEach(([k, v]) => {
-      if (!v) return; const s = el("span"); s.append(document.createTextNode(k + " "), Object.assign(el("b"), { textContent: v })); d.append(s);
-    });
-    c.append(d);
-    const b = el("button", null, "Ver detalle"); b.onclick = () => verDetalle(r.id); acc.append(b);
+    $c.append(el("div", "grande", "Asignado a " + r.responsable).append(el("small", null, `${fmt(r.desde)} a ${fmt(r.hasta)}`)));
+    const $d = el("p", "datos");
+    [["Caso", r.cliente_caso], ["Cliente", r.cliente], ["Servicio", r.servicio], ["Ubicación", r.ubicacion]].forEach(([k, v]) => { if (v) $d.append(par(k, v)); });
+    $c.append($d);
+    $acc.append(el("button", null, "Ver detalle").on("click", () => verDetalle(r.id)));
   } else {
     const sig = reservas.filter(x => x.equipo === eq && x.estado !== "cancelado" && new Date(x.desde).getTime() > t).sort((a, b) => new Date(a.desde) - new Date(b.desde))[0];
-    const g = el("div", "grande", "Libre en ese horario");
-    g.append(el("small", null, sig ? `Próxima reserva: ${fmt(sig.desde)}` : "Sin reservas posteriores"));
-    c.append(g);
-    if (t >= ahora.getTime() - 15 * 60000) { const b = el("button", "p", `Reservar ${eq} desde ahí`); b.onclick = () => abrir(eq, t); acc.append(b); }
+    $c.append(el("div", "grande", "Libre en ese horario").append(el("small", null, sig ? `Próxima reserva: ${fmt(sig.desde)}` : "Sin reservas posteriores")));
+    if (t >= ahora.getTime() - PASO) $acc.append(el("button", "p", `Reservar ${eq} desde ahí`).on("click", () => abrir(eq, t)));
   }
-  c.append(acc);
-  return c;
+  return $c.append($acc);
 }
 
 function pintarTarjetas() {
-  const v = document.getElementById("viendo"), tit = document.getElementById("titular"), eqs = document.getElementById("equipos");
-  v.replaceChildren();
+  const $v = $("#viendo").empty();
   if (momento == null) {
-    v.className = "viendo"; tit.textContent = titular(); eqs.replaceChildren(...EQUIPOS.map(tarjeta)); return;
+    $v.attr("class", "viendo");
+    $("#titular").text(titular());
+    $("#equipos").empty().append(EQUIPOS.map(tarjeta));
+    return;
   }
   const partes = EQUIPOS.map(eq => { const r = ocupaEn(eq, momento); return `${eq} ${r ? "está asignado a " + r.responsable : "está libre"}`; });
-  tit.textContent = `${fmt(momento)}: ${partes[0]} y ${partes[1]}.`;
-  eqs.replaceChildren(...EQUIPOS.map(eq => tarjetaEn(eq, momento)));
-  v.className = "viendo on";
-  const s = el("span", null, "Estás viendo el estado de otro momento, no el actual.");
-  const b = el("button", null, "Volver a ahora"); b.onclick = () => { momento = null; pintar(); };
-  v.append(s, b);
+  $("#titular").text(`${fmt(momento)}: ${partes[0]} y ${partes[1]}.`);
+  $("#equipos").empty().append(EQUIPOS.map(eq => tarjetaEn(eq, momento)));
+  $v.attr("class", "viendo on").append(
+    el("span", null, "Estás viendo el estado de otro momento, no el actual."),
+    el("button", null, "Volver a ahora").on("click", () => { momento = null; pintar(); })
+  );
 }
 
 /* ---------- Marcador arrastrable ---------- */
 function posicionarMarca() {
-  const m = document.getElementById("marca");
-  if (!m) return;
+  const $m = $("#marca");
+  if (!$m.length) return;
   const p = momento ?? ahora.getTime();
-  m.style.left = `calc(90px + (100% - 90px) * ${(p - VENT.ini) / VENT_TOTAL})`;
-  m.dataset.et = momento == null ? "Ahora" : fmt(momento);
-  m.setAttribute("aria-valuetext", m.dataset.et);
-  m.classList.toggle("mov", momento != null);
+  const et = momento == null ? "Ahora" : fmt(momento);
+  $m.css("left", `calc(90px + (100% - 90px) * ${(p - VENT.ini) / VENT_TOTAL})`)
+    .attr({ "data-et": et, "aria-valuetext": et })
+    .toggleClass("mov", momento != null);
 }
 
 function fijarMomento(t) {
-  const paso = 15 * 60000;
-  t = Math.round(t / paso) * paso;
-  momento = Math.abs(t - ahora.getTime()) <= paso / 2 ? null : t;
-  if (document.getElementById("marca")) posicionarMarca(); else pintarScope();
+  t = Math.round(t / PASO) * PASO;
+  momento = Math.abs(t - ahora.getTime()) <= PASO / 2 ? null : t;
+  if ($("#marca").length) posicionarMarca(); else pintarScope();
   pintarTarjetas();
 }
 
-function tDesdeX(cont, x) {
-  const r = cont.getBoundingClientRect(), izq = r.left + 90, w = r.width - 90;
+function tDesdeX($cont, x) {
+  const r = $cont[0].getBoundingClientRect(), izq = r.left + 90, w = r.width - 90;
   return VENT.ini + Math.min(1, Math.max(0, (x - izq) / w)) * VENT_TOTAL;
 }
 
-function activarMarca(m, cont) {
+function activarMarca($m, $cont) {
   let arrastra = false;
-  m.addEventListener("pointerdown", (e) => { arrastra = true; m.setPointerCapture(e.pointerId); e.preventDefault(); });
-  m.addEventListener("pointermove", (e) => { if (arrastra) fijarMomento(tDesdeX(cont, e.clientX)); });
-  const soltar = () => { arrastra = false; };
-  m.addEventListener("pointerup", soltar); m.addEventListener("pointercancel", soltar);
-  m.addEventListener("keydown", (e) => {
-    const paso = e.shiftKey ? H : 15 * 60000;
-    let p = momento ?? ahora.getTime();
-    if (e.key === "ArrowRight") p += paso;
-    else if (e.key === "ArrowLeft") p -= paso;
-    else if (e.key === "Home") { momento = null; posicionarMarca(); pintarTarjetas(); e.preventDefault(); return; }
-    else return;
-    e.preventDefault();
-    fijarMomento(Math.min(VENT.fin, Math.max(VENT.ini, p)));
-  });
+  $m.on("pointerdown", (e) => { arrastra = true; $m[0].setPointerCapture(e.originalEvent.pointerId); e.preventDefault(); })
+    .on("pointermove", (e) => { if (arrastra) fijarMomento(tDesdeX($cont, e.clientX)); })
+    .on("pointerup pointercancel", () => { arrastra = false; })
+    .on("keydown", (e) => {
+      const paso = e.shiftKey ? H : PASO;
+      let p = momento ?? ahora.getTime();
+      if (e.key === "ArrowRight") p += paso;
+      else if (e.key === "ArrowLeft") p -= paso;
+      else if (e.key === "Home") { momento = null; posicionarMarca(); pintarTarjetas(); e.preventDefault(); return; }
+      else return;
+      e.preventDefault();
+      fijarMomento(Math.min(VENT.fin, Math.max(VENT.ini, p)));
+    });
 }
 
 /* ---------- Línea de tiempo ---------- */
 function pintarScope() {
-  const cont = document.getElementById("scope");
-  cont.replaceChildren();
+  const $cont = $("#scope").empty();
   const ini = iniFijo ?? (ahora.getTime() - VENT_ANTES), fin = ini + VENT_TOTAL;
   const punto = momento ?? ahora.getTime(), dentro = punto >= ini && punto <= fin;
   VENT = { ini, fin };
-  document.getElementById("rango").textContent = `${diaTZ(new Date(ini))} al ${diaTZ(new Date(fin - 1))}`;
-  document.getElementById("fuera").classList.toggle("on", !dentro);
+  $("#rango").text(`${diaTZ(new Date(ini))} al ${diaTZ(new Date(fin - 1))}`);
+  $("#fuera").toggleClass("on", !dentro);
   const pct = (t) => ((t - ini) / VENT_TOTAL) * 100;
 
   EQUIPOS.forEach(eq => {
-    const fila = el("div", "fila");
-    fila.append(el("span", "lb", eq));
-    const pista = el("div", "pista");
+    const $pista = el("div", "pista").on("pointerdown", (e) => { if (e.target === $pista[0]) fijarMomento(tDesdeX($cont, e.clientX)); });
     reservas.filter(r => r.equipo === eq && r.estado !== "cancelado").forEach(r => {
       const a = Math.max(new Date(r.desde).getTime(), ini), b = Math.min(new Date(r.hasta).getTime(), fin);
       if (b <= a) return;
-      const bar = el("button", "bar " + claseEstado(r), r.responsable);
-      bar.style.left = pct(a) + "%"; bar.style.width = Math.max(pct(b) - pct(a), .8) + "%";
-      bar.title = `${eq}: ${fmt(r.desde)} a ${fmt(r.hasta)} · ${r.responsable}`;
-      bar.setAttribute("aria-label", bar.title);
-      bar.onclick = () => verDetalle(r.id);
-      pista.append(bar);
+      const titulo = `${eq}: ${fmt(r.desde)} a ${fmt(r.hasta)} · ${r.responsable}`;
+      $pista.append(el("button", "bar " + claseEstado(r), r.responsable)
+        .css({ left: pct(a) + "%", width: Math.max(pct(b) - pct(a), .8) + "%" })
+        .attr({ title: titulo, "aria-label": titulo })
+        .on("click", () => verDetalle(r.id)));
     });
-    pista.addEventListener("pointerdown", (e) => { if (e.target === pista) fijarMomento(tDesdeX(cont, e.clientX)); });
-    fila.append(pista); cont.append(fila);
+    $cont.append(el("div", "fila").append(el("span", "lb", eq), $pista));
   });
 
-  const ejes = el("div", "ejes"); ejes.append(el("span"));
-  const ticks = el("div", "ticks");
-  const primero = Math.ceil(ini / H) * H;
-  for (let t = primero; t < fin; t += H) {
+  const $ticks = el("div", "ticks");
+  for (let t = Math.ceil(ini / H) * H; t < fin; t += H) {
     const d = new Date(t), h = horaTZ(d);
     if (h % 6) continue;
-    const s = el("span", h === 0 ? "dia" : "", h === 0 ? diaTZ(d) : String(h).padStart(2, "0") + " h");
-    s.style.left = pct(t) + "%"; ticks.append(s);
+    $ticks.append(el("span", h === 0 ? "dia" : "", h === 0 ? diaTZ(d) : String(h).padStart(2, "0") + " h").css("left", pct(t) + "%"));
   }
-  ejes.append(ticks); cont.append(ejes);
+  $cont.append(el("div", "ejes").append(el("span"), $ticks));
 
-  // Cursor "Ahora": se ubica sobre la zona de pistas (78 px de etiqueta + 12 px de separación)
   if (dentro) {
-    const cur = el("div", "ahora"); cur.id = "marca";
-    cur.tabIndex = 0; cur.setAttribute("role", "slider"); cur.setAttribute("aria-label", "Momento que se está viendo");
-    cur.append(el("b"));
-    cont.append(cur);
+    const $m = $("<div>", { id: "marca", tabindex: 0, role: "slider", "aria-label": "Momento que se está viendo" }).addClass("ahora").append($("<b>"));
+    $cont.append($m);
     posicionarMarca();
-    activarMarca(cur, cont);
+    activarMarca($m, $cont);
   }
 }
 
 /* ---------- Lista ---------- */
 function pintarLista() {
-  const ul = document.getElementById("lista");
-  ul.replaceChildren();
+  const $ul = $("#lista").empty();
   const act = reservas.filter(activa).sort((a, b) => new Date(a.desde) - new Date(b.desde));
-  if (!act.length) {
-    ul.append(el("li", "vacio", "No hay reservas pendientes. Reservá un equipo para empezar."));
-    return;
-  }
+  if (!act.length) { $ul.append(el("li", "vacio", "No hay reservas pendientes. Reservá un equipo para empezar.")); return; }
   act.forEach(r => {
-    const li = el("li", "it"); li.dataset.id = r.id;
-    const h = el("div", "h");
-    h.append(el("b", null, r.equipo), el("span", null, `${fmt(r.desde)} a ${fmt(r.hasta)}`),
-      el("span", "chip " + claseEstado(r), vencida(r) ? "Vencida" : r.estado === "retirado" ? "Retirado" : "Reservado"));
-    li.append(h);
-    li.append(el("div", "m", [r.responsable, r.sector, r.cliente_caso && "Caso " + r.cliente_caso, r.cliente, r.servicio].filter(Boolean).join(" · ")));
-    if (r.observacion) li.append(el("div", "m", r.observacion));
-    const acc = el("div", "acc");
-    const bd = el("button", null, "Ver detalle"); bd.onclick = () => verDetalle(r.id); acc.append(bd);
+    const $li = el("li", "it").attr("data-id", r.id);
+    $li.append(el("div", "h").append(el("b", null, r.equipo), el("span", null, `${fmt(r.desde)} a ${fmt(r.hasta)}`),
+      el("span", "chip " + claseEstado(r), vencida(r) ? "Vencida" : r.estado === "retirado" ? "Retirado" : "Reservado")));
+    $li.append(el("div", "m", [r.responsable, r.sector, r.cliente_caso && "Caso " + r.cliente_caso, r.cliente, r.servicio].filter(Boolean).join(" · ")));
+    if (r.observacion) $li.append(el("div", "m", r.observacion));
+    const $acc = el("div", "acc").append(el("button", null, "Ver detalle").on("click", () => verDetalle(r.id)));
     if (r.estado === "reservado") {
-      const b1 = el("button", "p", "Retirar"); b1.onclick = () => accion(r.id, "retirado", "Equipo retirado");
-      const b2 = el("button", null, "Cancelar reserva"); b2.onclick = () => { if (confirm("¿Cancelar esta reserva?")) accion(r.id, "cancelado", "Reserva cancelada"); };
-      acc.append(b1, b2);
+      $acc.append(el("button", "p", "Retirar").on("click", () => accion(r.id, "retirado", "Equipo retirado")),
+                  el("button", null, "Cancelar reserva").on("click", () => { if (confirm("¿Cancelar esta reserva?")) accion(r.id, "cancelado", "Reserva cancelada"); }));
     } else {
-      const b = el("button", "p", "Devolver"); b.onclick = () => accion(r.id, "devuelto", "Equipo devuelto");
-      acc.append(b);
+      $acc.append(el("button", "p", "Devolver").on("click", () => accion(r.id, "devuelto", "Equipo devuelto")));
     }
-    li.append(acc); ul.append(li);
+    $ul.append($li.append($acc));
   });
 }
 
-function pintar() {
-  pintarTarjetas(); pintarScope(); pintarLista();
-}
+function pintar() { pintarTarjetas(); pintarScope(); pintarLista(); }
 
 async function cargar() {
   try {
@@ -496,109 +499,150 @@ async function cargar() {
   } catch (e) { aviso("No se pudo actualizar: " + e.message, true); }
 }
 
-/* ---------- Formulario ---------- */
-const dlg = document.getElementById("dlg"), F = document.getElementById("f"), AV = document.getElementById("aviso"), GO = document.getElementById("go");
-const local = (d) => { const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
-
-function abrir(eq, desdeMs) {
-  const d = desdeMs ? new Date(desdeMs) : new Date(); d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0);
-  if (eq) F.equipo.value = eq;
-  F.desde.value = local(d); F.hasta.value = local(new Date(d.getTime() + 2 * H));
-  AV.className = "aviso"; AV.textContent = "";
-  verChoque();
-  dlg.showModal();
-}
-
-function verChoque() {
-  const a = new Date(F.desde.value), b = new Date(F.hasta.value);
-  GO.disabled = false;
-  if (isNaN(a) || isNaN(b)) return;
-  if (b <= a) { AV.className = "aviso e"; AV.textContent = "La hora de fin tiene que ser posterior a la de inicio."; GO.disabled = true; return; }
-  const c = reservas.find(r => r.equipo === F.equipo.value && activa(r) && a < new Date(r.hasta) && b > new Date(r.desde));
-  if (c) { AV.className = "aviso e"; AV.textContent = `Ese horario se superpone con la reserva de ${c.responsable} (${fmt(c.desde)} a ${fmt(c.hasta)}). Elegí otro horario.`; GO.disabled = true; }
-  else { AV.className = "aviso o"; AV.textContent = "Horario libre para este equipo."; }
-}
-
-["equipo", "desde", "hasta"].forEach(n => F[n].addEventListener("input", verChoque));
-document.querySelectorAll("[data-nueva]").forEach(b => b.onclick = () => abrir());
-document.getElementById("cerrar").onclick = document.getElementById("cancelar").onclick = () => dlg.close();
-dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
-try { const n = localStorage.getItem("veex_resp"); if (n) F.responsable.value = n; } catch (_) {}
-
-F.addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const v = Object.fromEntries(new FormData(F));
-  v.desde = new Date(v.desde).toISOString(); v.hasta = new Date(v.hasta).toISOString();
-  GO.disabled = true;
-  try {
-    await pedir("/api/reservas", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(v) });
-    try { localStorage.setItem("veex_resp", v.responsable); } catch (_) {}
-    ["cliente_caso","cliente","servicio","descripcion_caso","ubicacion","observacion"].forEach(n => F[n].value = "");
-    dlg.close(); aviso("Reserva guardada"); cargar();
-  } catch (e) { AV.className = "aviso e"; AV.textContent = e.message; GO.disabled = false; }
-});
-
 /* ---------- Detalle del caso ---------- */
-const DET = document.getElementById("det"), DETC = document.getElementById("det-c");
 function verDetalle(id) {
   const r = reservas.find(x => x.id === id);
   if (!r) return;
-  DETC.replaceChildren();
-  const dl = el("dl");
-  const fila = (k, v) => { dl.append(el("dt", null, k), el("dd", null, v || "Sin datos")); };
+  const $dl = el("dl");
+  const fila = (k, v) => $dl.append(el("dt", null, k), el("dd", null, v || "Sin datos"));
   fila("Equipo", r.equipo);
   fila("Horario", `${fmt(r.desde)} a ${fmt(r.hasta)}`);
-  const chip = el("span", "chip " + claseEstado(r), vencida(r) ? "Devolución vencida" : { reservado:"Reservado", retirado:"Retirado", devuelto:"Devuelto", cancelado:"Cancelado" }[r.estado]);
-  dl.append(el("dt", null, "Estado")); const dd = el("dd"); dd.append(chip); dl.append(dd);
+  $dl.append(el("dt", null, "Estado"), el("dd").append(el("span", "chip " + claseEstado(r),
+    vencida(r) ? "Devolución vencida" : { reservado:"Reservado", retirado:"Retirado", devuelto:"Devuelto", cancelado:"Cancelado" }[r.estado])));
   fila("Responsable", r.responsable + (r.sector ? ` (${r.sector})` : ""));
   fila("Número de caso", r.cliente_caso);
   fila("Cliente", r.cliente);
   fila("Servicio asociado", r.servicio);
   fila("Ubicación", r.ubicacion);
-  DETC.append(dl);
-  const d = el("div"); d.append(el("div", "dt", "Descripción del caso"));
-  d.firstChild.style.cssText = "color:var(--mut);font-size:13px;margin-bottom:6px";
-  d.append(el("div", "desc", r.descripcion_caso || "No se cargó una descripción."));
-  DETC.append(d);
-  if (r.observacion) { const o = el("div"); o.append(el("div", null, "Observación")); o.firstChild.style.cssText = "color:var(--mut);font-size:13px;margin-bottom:6px"; o.append(el("div", "desc", r.observacion)); DETC.append(o); }
-  const acc = el("div", "acc");
-  const cerrar = (f) => () => { DET.close(); f(); };
+  const bloque = (titulo, texto) => el("div").append(el("div", "dtit", titulo), el("div", "desc", texto));
+  const $acc = el("div", "acc");
+  const cerrando = (f) => () => { $("#det")[0].close(); f(); };
   if (r.estado === "reservado") {
-    const b1 = el("button", "p", "Retirar"); b1.onclick = cerrar(() => accion(r.id, "retirado", "Equipo retirado"));
-    const b2 = el("button", null, "Cancelar reserva"); b2.onclick = cerrar(() => { if (confirm("¿Cancelar esta reserva?")) accion(r.id, "cancelado", "Reserva cancelada"); });
-    acc.append(b1, b2);
+    $acc.append(el("button", "p", "Retirar").on("click", cerrando(() => accion(r.id, "retirado", "Equipo retirado"))),
+                el("button", null, "Cancelar reserva").on("click", cerrando(() => { if (confirm("¿Cancelar esta reserva?")) accion(r.id, "cancelado", "Reserva cancelada"); })));
   } else if (r.estado === "retirado") {
-    const b = el("button", "p", "Devolver"); b.onclick = cerrar(() => accion(r.id, "devuelto", "Equipo devuelto"));
-    acc.append(b);
+    $acc.append(el("button", "p", "Devolver").on("click", cerrando(() => accion(r.id, "devuelto", "Equipo devuelto"))));
   }
-  DETC.append(acc);
-  DET.showModal();
+  $("#det-c").empty().append($dl, bloque("Descripción del caso", r.descripcion_caso || "No se cargó una descripción."),
+    r.observacion ? bloque("Observación", r.observacion) : null, $acc);
+  $("#det")[0].showModal();
 }
-document.getElementById("det-x").onclick = () => DET.close();
-DET.addEventListener("click", (e) => { if (e.target === DET) DET.close(); });
+$("#det-x").on("click", () => $("#det")[0].close());
+$("#det").on("click", (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
 
 /* ---------- Navegación de la línea de tiempo ---------- */
 const base = () => iniFijo ?? (ahora.getTime() - VENT_ANTES);
-document.getElementById("ant").onclick = () => { iniFijo = base() - 24 * H; pintarScope(); };
-document.getElementById("sig").onclick = () => { iniFijo = base() + 24 * H; pintarScope(); };
-document.getElementById("hoy").onclick = () => { iniFijo = null; momento = null; document.getElementById("ir").value = ""; pintar(); };
-document.getElementById("ir").onchange = (e) => {
-  if (!e.target.value) return;
-  iniFijo = new Date(e.target.value + "T00:00:00-03:00").getTime();   // Argentina: UTC-3 todo el año
+$("#ant").on("click", () => { iniFijo = base() - 24 * H; pintarScope(); });
+$("#sig").on("click", () => { iniFijo = base() + 24 * H; pintarScope(); });
+$("#hoy").on("click", () => { iniFijo = null; momento = null; $("#ir").val(""); pintar(); });
+$("#ir").on("change", function () {
+  if (!this.value) return;
+  iniFijo = new Date(this.value + "T00:00:00-03:00").getTime();   // Argentina: UTC-3 todo el año
   pintarScope();
-};
+});
+
+/* ---------- Formulario de reserva ---------- */
+const $F = $("#f"), $AV = $("#aviso"), $GO = $("#go");
+const local = (d) => { const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+const campo = (n) => $F.find(`[name="${n}"]`);
+
+function abrir(eq, desdeMs) {
+  const d = desdeMs ? new Date(desdeMs) : new Date();
+  d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0);
+  if (eq) campo("equipo").val(eq);
+  campo("desde").val(local(d)); campo("hasta").val(local(new Date(d.getTime() + 2 * H)));
+  $AV.attr("class", "aviso").text("");
+  verChoque();
+  $("#dlg")[0].showModal();
+}
+
+function verChoque() {
+  const a = new Date(campo("desde").val()), b = new Date(campo("hasta").val());
+  $GO.prop("disabled", false);
+  if (isNaN(a) || isNaN(b)) return;
+  if (b <= a) { $AV.attr("class", "aviso e").text("La hora de fin tiene que ser posterior a la de inicio."); $GO.prop("disabled", true); return; }
+  const c = reservas.find(r => r.equipo === campo("equipo").val() && activa(r) && a < new Date(r.hasta) && b > new Date(r.desde));
+  if (c) { $AV.attr("class", "aviso e").text(`Ese horario se superpone con la reserva de ${c.responsable} (${fmt(c.desde)} a ${fmt(c.hasta)}). Elegí otro horario.`); $GO.prop("disabled", true); }
+  else $AV.attr("class", "aviso o").text("Horario libre para este equipo.");
+}
+
+$F.find('[name="equipo"],[name="desde"],[name="hasta"]').on("input change", verChoque);
+$("[data-nueva]").on("click", () => abrir());
+$("#cerrar,#cancelar").on("click", () => $("#dlg")[0].close());
+$("#dlg").on("click", (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+try { const n = localStorage.getItem("veex_resp"); if (n) campo("responsable").val(n); } catch (_) {}
+
+$F.on("submit", async (ev) => {
+  ev.preventDefault();
+  const v = Object.fromEntries($F.serializeArray().map(x => [x.name, x.value]));
+  v.desde = new Date(v.desde).toISOString(); v.hasta = new Date(v.hasta).toISOString();
+  $GO.prop("disabled", true);
+  try {
+    await pedir("/api/reservas", v);
+    try { localStorage.setItem("veex_resp", v.responsable); } catch (_) {}
+    ["cliente_caso", "cliente", "servicio", "descripcion_caso", "ubicacion", "observacion"].forEach(n => campo(n).val(""));
+    $("#dlg")[0].close(); aviso("Reserva guardada"); cargar(); cargarUso();
+  } catch (e) { $AV.attr("class", "aviso e").text(e.message); $GO.prop("disabled", false); }
+});
+
+/* ---------- Gráficos de uso (Chart.js) ---------- */
+function diasRango(n) {
+  const out = [], hoy = Date.now();
+  for (let i = -(n - 1); i <= 7; i++) out.push(new Date(hoy + i * 24 * H).toLocaleDateString("en-CA", { timeZone: TZ }));
+  return out;
+}
+
+async function cargarUso() {
+  const n = Number($("#dias").val());
+  let d;
+  try { d = await pedir("/api/estadisticas?dias=" + n); } catch (e) { $("#kpis").text("No se pudieron cargar las estadísticas: " + e.message); return; }
+  const ocup = Math.min(100, Math.round((d.resumen.horas_usadas / (24 * d.dias * EQUIPOS.length)) * 100));
+  $("#kpis").empty().append(
+    [["Reservas del período", d.resumen.reservas], ["Horas de uso", d.resumen.horas_usadas], ["Ocupación de los dos equipos", ocup + " %"], ["Devoluciones vencidas", d.resumen.vencidas]]
+      .map(([k, v]) => el("div", "kpi").append(el("b", null, String(v)), el("span", null, k))));
+  if (typeof Chart === "undefined") { $("#graficos").text("No se pudo cargar la librería de gráficos."); return; }
+
+  Chart.defaults.color = "#93a6cc"; Chart.defaults.font.family = "Sora, system-ui, sans-serif"; Chart.defaults.borderColor = "#16275a";
+  const dias = diasRango(n), hoy = new Date().toLocaleDateString("en-CA", { timeZone: TZ });
+  const etiqueta = (iso) => new Date(iso + "T12:00:00-03:00").toLocaleDateString("es-AR", { timeZone: TZ, weekday: "short", day: "2-digit" }).replace(/,/g, "");
+  const serie = (eq) => dias.map(dia => { const f = d.porDia.find(x => x.dia === dia && x.equipo === eq); return f ? Math.round(f.horas * 10) / 10 : 0; });
+
+  graficos.dia?.destroy();
+  graficos.dia = new Chart($("#gDia")[0], {
+    type: "bar",
+    data: { labels: dias.map(etiqueta), datasets: [
+      { label: "VeEX 10G", data: serie("VeEX 10G"), backgroundColor: "#2563ff", borderRadius: 4 },
+      { label: "VeEX 1G", data: serie("VeEX 1G"), backgroundColor: "#9b8cff", borderRadius: 4 }] },
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+      scales: { x: { stacked: true, grid: { display: false }, ticks: { color: (c) => dias[c.index] === hoy ? "#bfd4ff" : "#93a6cc", maxRotation: 0, autoSkip: true } },
+                y: { stacked: true, beginAtZero: true, suggestedMax: 24, title: { display: true, text: "Horas reservadas" } } },
+      plugins: { legend: { labels: { usePointStyle: true } }, tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.y} h`, title: (i) => i[0].label + (dias[i[0].dataIndex] === hoy ? " (hoy)" : "") } } } }
+  });
+
+  graficos.sector?.destroy();
+  const colores = ["#2563ff", "#9b8cff", "#ffb84d", "#3fd39a", "#ff5470"];
+  graficos.sector = new Chart($("#gSector")[0], {
+    type: "doughnut",
+    data: { labels: d.porSector.map(s => s.sector), datasets: [{ data: d.porSector.map(s => s.reservas), backgroundColor: colores, borderColor: "#0a1226", borderWidth: 3 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: "62%",
+      plugins: { legend: { position: "bottom", labels: { usePointStyle: true } },
+        tooltip: { callbacks: { label: (c) => `${c.label}: ${c.parsed} reservas · ${d.porSector[c.dataIndex].horas} h` } } } }
+  });
+  $("#sinDatos").toggle(!d.porSector.length);
+}
+$("#dias").on("change", cargarUso);
 
 /* ---------- Reloj, fondo y arranque ---------- */
 function reloj() {
-  document.getElementById("reloj").textContent = new Date().toLocaleString("es-AR", { timeZone: TZ, weekday:"long", day:"numeric", month:"long", hour:"2-digit", minute:"2-digit", hour12:false });
+  $("#reloj").text(new Date().toLocaleString("es-AR", { timeZone: TZ, weekday:"long", day:"numeric", month:"long", hour:"2-digit", minute:"2-digit", hour12:false }));
 }
 
 (function () {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const c = document.getElementById("rain"), x = c.getContext("2d"), g = "01アイウエオカキクケコ<>/{}[]=+*", s = 16;
+  const c = $("#rain")[0], x = c.getContext("2d"), g = "01アイウエオカキクケコ<>/{}[]=+*", s = 16;
   let cols, d;
   function fit() { c.width = innerWidth; c.height = innerHeight; cols = Math.ceil(c.width / s); d = Array.from({ length: cols }, () => Math.random() * -50); }
-  addEventListener("resize", fit); fit();
+  $(window).on("resize", fit); fit();
   setInterval(() => {
     x.fillStyle = "rgba(3,6,15,.14)"; x.fillRect(0, 0, c.width, c.height);
     x.fillStyle = "#1f5bff"; x.font = s + "px monospace";
@@ -606,10 +650,13 @@ function reloj() {
   }, 70);
 })();
 
-reloj(); cargar();
-setInterval(reloj, 30000);
-setInterval(cargar, 60000);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) cargar(); });
+$(function () {
+  reloj(); cargar(); cargarUso();
+  setInterval(reloj, 30000);
+  setInterval(cargar, 60000);
+  setInterval(cargarUso, 300000);
+  $(document).on("visibilitychange", () => { if (!document.hidden) cargar(); });
+});
 </script>
 </body>
 </html>
