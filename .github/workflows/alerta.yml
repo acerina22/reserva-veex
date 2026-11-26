@@ -19,3 +19,4 @@ jobs:
         env:
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_VAR: ${{ secrets.SLACK_WEBHOOK_VAR }}
